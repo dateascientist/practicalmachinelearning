@@ -1,5 +1,5 @@
 ---
-title: "Coursera Machine LearningProject"
+title: "Coursera Machine Learning Project"
 author: "Devan S."
 date: "March 4, 2016"
 output: html_document
@@ -7,6 +7,147 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+suppressMessages(library(caret))
+suppressMessages(library(dplyr))
+suppressMessages(library(randomForest))
+suppressMessages(library(rpart))
 ```
 
-## Project Github Setup
+### Project Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit, it is now possible 
+to collect a large amount of data about personal activity relatively inexpensively. 
+These type of devices are part of the quantified self movement - a group of 
+enthusiasts who take measurements about themselves regularly to improve their 
+health, to find patterns in their behavior, or because they are tech geeks. 
+
+One thing that people regularly do is quantify how much of a particular activity they
+do, but they rarely quantify how well they do it. In this project, our goal will
+be to use data from accelerometers on the belt, forearm, arm, and dumbbell of 6 
+participants to predict how well an exercise was performed.
+
+Six participants were asked to perform one set of 10 repetitions of the Unilateral
+Dumbbell Biceps Curl in five different fashions:
+
+Exactly according to the specification (**Class A**)  
+Throwing the elbows to the front (**Class B**)  
+Lifting the dumbbell only halfway (**Class C**)  
+Lowering the dumbbell only halfway (**Class D**)   
+Throwing the hips to the front (**Class E**)
+
+Complete information can be found at: http://groupware.les.inf.puc-rio.br/har
+
+### Loading and processing the data set
+
+The original data set can be found at the following location: 
+http://groupware.les.inf.puc-rio.br/har#dataset.  
+
+We are already provided a training and test set as part of the project. We will 
+load these below. Investigating the data, we see NA and #DIV/0! values. Let's 
+convert all #DIV/0! to NAs in the read.csv function.
+
+
+```{r, cache=TRUE}
+trainURL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testURL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+rawTrain <- read.csv(trainURL, na.strings = c("NA", "#DIV/0!"))
+rawTest <- read.csv(testURL)
+```
+
+Let's look at the first variable names in our raw train data frame.
+
+```{r}
+head(names(rawTrain), 10)
+```
+
+X simply corresponds to the row number, and as a result we can remove it. From a 
+prediction standpoint, we are also not interested in the user who performed the
+task, or any related time data. We will remove these from the train and test data
+set as well.
+
+```{r}
+rawTrain <- select(rawTrain, 8:length(rawTrain))
+rawTest <- select(rawTest, 8:length(rawTest))
+```
+
+Now let's remove a variable column if it is comprised of approximately 90%+ NAs.
+
+```{r}
+largeNA <- which(colSums(is.na(rawTrain)) > 17700)
+cleanedTrain <- rawTrain[, -largeNA]
+```
+
+### Data Splitting
+
+We will now split our cleaned training set into an additional training and 
+testing set. For the sake of this project we will be using a 70/30 split.
+
+```{r}
+set.seed(1221)
+trainSet <- createDataPartition(cleanedTrain$classe, p=0.70, list=FALSE)
+training <- cleanedTrain[trainSet, ]
+testing <- cleanedTrain[-trainSet, ]
+dim(training); dim(testing)
+```
+
+### Model Selection
+
+Let's first run a basic model of fitting single trees. We will use the method 
+rpart which fits the classical "CART" models of Breiman *et al* (1984). By default,
+the resampling scheme is bootstrap with 25 reps.
+
+```{r, cache=TRUE}
+modelFit1 <- train(classe ~ ., data = training, method = "rpart")
+predict1 <- predict(modelFit1, newdata = testing)
+confusionMatrix(predict1, testing$classe)
+```
+
+With this basic model we have a low accuracy rate of approximately 49.6% and an
+out-of-sample error rate of `0.504`. Let's build another rpart model but this time 
+we will use repeated 10-fold cross-validation.
+
+```{r, cache=TRUE}
+cvCtrl <- trainControl(method = "repeatedcv", repeats = 3)
+modelFit2 <- train(classe ~ ., data = training, method = "rpart", tuneLength = 30, 
+           trControl = cvCtrl)
+predict2 <- predict(modelFit2, newdata = testing)
+confusionMatrix(predict2, testing$classe)
+```
+With our new cross-validation model we have an accuracy 82.5% and an out-of-sample
+error rate of `0.175`. Getting better!
+
+Lastly, let's build a final model using a random forest algorithm. We have learned 
+throughout the course that this prediction algorithm tends to be very accurate.
+Let's take a look and see what the accuracy is.
+
+```{r, cache=TRUE}
+modelFit3 <- train(classe ~ ., data = training, method="rf", ntree = 500)
+predict3 <- predict(modelFit3, newdata = testing)
+confusionMatrix(predict3, testing$classe)
+```
+
+Our latest model has an accuracy of 99.05%. We can confirm that this is in fact
+the best of the 3 models by a large margin. Our out-of-sample error rate in this
+case would be extremely low at `0.0095`. In random forests, there is no need for
+cross-validation to get an unbiased estimate of the test set error as it is 
+estimated internally during the run.
+
+As an aside, when we run our final prediction model on the original raw test set of 20
+subjects we get the following classes.
+
+```{r}
+predict(modelFit3, newdata=rawTest)
+```
+
+I have submitted these to the quiz portion of the project and they are indeed
+100% correct.
+
+### References
+
+Ugulino W, Cardador D, Vega K, Velloso E, Milidiu R, Fuks H (2012). Wearable 
+Computing: Accelerometers' Data Classification of Body Postures and Movements. 
+
+Breiman L, Friedman J, Olshen R, Stone C (1984). Classification and
+Regression Trees. Chapman and Hall, New York.
+
+
